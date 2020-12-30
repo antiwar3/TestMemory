@@ -1,4 +1,5 @@
 #include "remap.h"
+#include "stdio.h"
 fnNtUnmapViewOfSection *pfnNtUnmapViewOfSection = NULL;
 fnNtCreateSection *pfnNtCreateSection = NULL;
 fnNtMapViewOfSection *pfnNtMapViewOfSection = NULL;
@@ -14,7 +15,7 @@ int GetDllMemorySize(HMODULE hModule)
 	PIMAGE_DOS_HEADER pDosHeader = PIMAGE_DOS_HEADER(hModule);
 	if (pDosHeader)
 	{
-		PIMAGE_NT_HEADERS64 pNTHeader = (PIMAGE_NT_HEADERS64)((DWORD64)pDosHeader + pDosHeader->e_lfanew);
+		PIMAGE_NT_HEADERS64 pNTHeader = (PIMAGE_NT_HEADERS64)((DWORD64)hModule + pDosHeader->e_lfanew);
 		if (pNTHeader->Signature == IMAGE_NT_SIGNATURE)
 		{
 			int result = 0;
@@ -103,19 +104,23 @@ BOOL InitNtApi(HMODULE hNtModule)
 BOOL ReMapModule(HMODULE hModule)
 {
 	BOOL bRet = FALSE;
-	PIMAGE_DOS_HEADER pDosHeader = PIMAGE_DOS_HEADER(hModule);
-	PIMAGE_NT_HEADERS64		pNtHeader = PIMAGE_NT_HEADERS64((DWORD64)hModule + pDosHeader->e_lfanew);
-	PIMAGE_SECTION_HEADER	pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);
+	
 	DWORD64					LockSize = 1;
 	DWORD64 ExecuteSize = 0;
 	DWORD64 ReadOnlySize = 0;
 
 
 	DWORD dwImage = GetDllMemorySize(hModule);
+
 	PVOID copybuf = VirtualAlloc(NULL, dwImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+
 	SIZE_T numberOfBytesRead = 0;
 	ReadProcessMemory(GetCurrentProcess(), hModule, copybuf, dwImage, &numberOfBytesRead);
-	ULONG uRet = pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
+	PIMAGE_DOS_HEADER pDosHeader = PIMAGE_DOS_HEADER(copybuf);
+	PIMAGE_NT_HEADERS64		pNtHeader = PIMAGE_NT_HEADERS64((DWORD64)copybuf + (DWORD)(pDosHeader->e_lfanew));
+
+	printf("%I64X\n", pNtHeader);
+	PIMAGE_SECTION_HEADER	pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);
 	HANDLE hSection = NULL;
 	LARGE_INTEGER sectionMaxSize = {};
 	sectionMaxSize.QuadPart = dwImage;
@@ -144,10 +149,12 @@ BOOL ReMapModule(HMODULE hModule)
 	SIZE_T numberOfBytesWritten = 0;
 	WriteProcessMemory(GetCurrentProcess(), viewBase, copybuf, viewSize, &numberOfBytesWritten);
 
-	pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
+	
 
 	if (pNtHeader->OptionalHeader.SectionAlignment == AllocationGranularity)
 	{
+		
+		MessageBoxA(0, 0, 0, 0);
 		viewBase = hModule;
 		DWORD ViewSize = AllocationGranularity;
 		pfnNtMapViewOfSection(hSection, GetCurrentProcess(), &viewBase, NULL, NULL, NULL, (PSIZE_T)&ViewSize, ViewUnmap, SEC_NO_CHANGE, PAGE_READONLY);
@@ -174,6 +181,7 @@ BOOL ReMapModule(HMODULE hModule)
 	}
 	else
 	{
+		
 		for (DWORD i = 0; i < pNtHeader->FileHeader.NumberOfSections; i++)
 		{
 			if (pSectionHeader[i].Characteristics & IMAGE_SCN_MEM_EXECUTE)
@@ -185,7 +193,7 @@ BOOL ReMapModule(HMODULE hModule)
 				break;
 			}
 		}
-
+		pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
 		viewBase = hModule;
 
 		if (ExecuteSize + ReadOnlySize >= AllocationGranularity && ExecuteSize + ReadOnlySize >= PADDING(ExecuteSize, AllocationGranularity))
@@ -228,7 +236,6 @@ BOOL ReMapModule(HMODULE hModule)
 		while (pfnNtLockVirtualMemory(GetCurrentProcess(), &viewBase, (ULONG)&LockSize, (PULONG)1) == STATUS_WORKING_SET_QUOTA)
 			ExtendWorkingSet(GetCurrentProcess());
 		bRet = TRUE;
-		
 
 	}
 	VirtualFree(copybuf, 0, MEM_RELEASE);

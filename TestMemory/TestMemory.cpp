@@ -35,17 +35,17 @@ int main()
 	{
 		if (InitNtApi(hNtModule))
 		{
+			pfnTestFun = (fnTestFun*)GetProcAddress(hModule, "?TestFun@@YAXXZ");
+			printf("%I64X %I64X\n", hModule, pfnTestFun);
 
+			if (ReMapModule(hModule))
+			{
+				printf("start\n");
+				HANDLE hThread = CreateThread(0, 0, TestThread, 0, 0, 0);
+			}
 		}
+	
 		
-
-		pfnTestFun = (fnTestFun*)GetProcAddress(hModule, "?TestFun@@YAXXZ");
-		printf("%I64X %I64X\n", hModule, pfnTestFun);
-		
-		if (ReMapModule(hModule))
-		{
-			HANDLE hThread = CreateThread(0, 0, TestThread, 0, 0, 0);
-		}
 	}
 	
 	
