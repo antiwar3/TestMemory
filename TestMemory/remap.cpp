@@ -119,7 +119,7 @@ BOOL ReMapModule(HMODULE hModule)
 	PIMAGE_DOS_HEADER pDosHeader = PIMAGE_DOS_HEADER(copybuf);
 	PIMAGE_NT_HEADERS64		pNtHeader = PIMAGE_NT_HEADERS64((DWORD64)copybuf + (DWORD)(pDosHeader->e_lfanew));
 
-	printf("%I64X\n", pNtHeader);
+
 	PIMAGE_SECTION_HEADER	pSectionHeader = IMAGE_FIRST_SECTION(pNtHeader);
 	HANDLE hSection = NULL;
 	LARGE_INTEGER sectionMaxSize = {};
@@ -149,7 +149,7 @@ BOOL ReMapModule(HMODULE hModule)
 	SIZE_T numberOfBytesWritten = 0;
 	WriteProcessMemory(GetCurrentProcess(), viewBase, copybuf, viewSize, &numberOfBytesWritten);
 
-	
+	ULONG uRet = pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
 
 	if (pNtHeader->OptionalHeader.SectionAlignment == AllocationGranularity)
 	{
