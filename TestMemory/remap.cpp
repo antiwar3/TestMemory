@@ -110,9 +110,67 @@ BOOL ReMapModule(HMODULE hModule)
 	DWORD64 ExecuteSize = 0;
 	DWORD64 ReadOnlySize = 0;
 
+
+	DWORD dwImage = GetDllMemorySize(hModule);
+	PVOID copybuf = VirtualAlloc(NULL, dwImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	SIZE_T numberOfBytesRead = 0;
+	ReadProcessMemory(GetCurrentProcess(), hModule, copybuf, dwImage, &numberOfBytesRead);
+	ULONG uRet = pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
+	HANDLE hSection = NULL;
+	LARGE_INTEGER sectionMaxSize = {};
+	sectionMaxSize.QuadPart = dwImage;
+	NTSTATUS st = pfnNtCreateSection(&hSection,
+		SECTION_ALL_ACCESS,
+		NULL,
+		&sectionMaxSize,
+		PAGE_EXECUTE_READWRITE,
+		SEC_COMMIT,
+		NULL);
+
+	LARGE_INTEGER sectionOffset = {};
+	PVOID viewBase = 0;
+	SIZE_T viewSize = 0;
+
+	pfnNtMapViewOfSection(hSection,
+		GetCurrentProcess(),
+		&viewBase,
+		0,
+		dwImage,
+		&sectionOffset,
+		&viewSize,
+		ViewUnmap,
+		0,
+		PAGE_EXECUTE_READWRITE);
+	SIZE_T numberOfBytesWritten = 0;
+	WriteProcessMemory(GetCurrentProcess(), viewBase, copybuf, viewSize, &numberOfBytesWritten);
+
+	pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
+
 	if (pNtHeader->OptionalHeader.SectionAlignment == AllocationGranularity)
 	{
-		MessageBoxA(0, 0, 0, 0);
+		viewBase = hModule;
+		DWORD ViewSize = AllocationGranularity;
+		pfnNtMapViewOfSection(hSection, GetCurrentProcess(), &viewBase, NULL, NULL, NULL, (PSIZE_T)&ViewSize, ViewUnmap, SEC_NO_CHANGE, PAGE_READONLY);
+		while (pfnNtLockVirtualMemory(GetCurrentProcess(), &viewBase, (ULONG)&LockSize, (PULONG)1) == STATUS_WORKING_SET_QUOTA)
+			ExtendWorkingSet(GetCurrentProcess());
+		for (DWORD i = 0, Protect; i < pNtHeader->FileHeader.NumberOfSections; i++)
+		{
+			// Calculate size and get page protection
+			viewBase = hModule + pSectionHeader[i].VirtualAddress;
+			ViewSize = PADDING(pSectionHeader[i].Misc.VirtualSize, AllocationGranularity);
+			sectionMaxSize.QuadPart = pSectionHeader[i].VirtualAddress;
+			if (pSectionHeader[i].Characteristics & IMAGE_SCN_MEM_EXECUTE)		Protect = PAGE_EXECUTE_READ;
+			else if (pSectionHeader[i].Characteristics & IMAGE_SCN_MEM_WRITE)	Protect = PAGE_READWRITE;
+			else																Protect = PAGE_READONLY;
+			pfnNtMapViewOfSection(hSection, GetCurrentProcess(), &viewBase, NULL, NULL, NULL, (PSIZE_T)&ViewSize, ViewUnmap, SEC_NO_CHANGE, PAGE_EXECUTE_READ);
+		
+			pfnNtMapViewOfSection(hSection, GetCurrentProcess(), &viewBase, NULL, NULL, &sectionMaxSize, (PSIZE_T)&ViewSize, ViewUnmap, SEC_NO_CHANGE, Protect);
+
+	
+			while (pfnNtLockVirtualMemory(GetCurrentProcess(), &viewBase, (ULONG)&LockSize, (PULONG)1) == STATUS_WORKING_SET_QUOTA)
+				ExtendWorkingSet(GetCurrentProcess());
+			bRet = TRUE;
+		}
 	}
 	else
 	{
@@ -127,43 +185,6 @@ BOOL ReMapModule(HMODULE hModule)
 				break;
 			}
 		}
-		DWORD dwImage = GetDllMemorySize(hModule);
-		PVOID copybuf = VirtualAlloc(NULL, dwImage, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-		SIZE_T numberOfBytesRead = 0;
-
-		ReadProcessMemory(GetCurrentProcess(), hModule, copybuf, dwImage, &numberOfBytesRead);
-
-		ULONG uRet = pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
-
-		HANDLE hSection = NULL;
-		LARGE_INTEGER sectionMaxSize = {};
-		sectionMaxSize.QuadPart = dwImage;
-		NTSTATUS st = pfnNtCreateSection(&hSection,
-			SECTION_ALL_ACCESS,
-			NULL,
-			&sectionMaxSize,
-			PAGE_EXECUTE_READWRITE,
-			SEC_COMMIT,
-			NULL);
-
-		LARGE_INTEGER sectionOffset = {};
-		PVOID viewBase = 0;
-		SIZE_T viewSize = 0;
-
-		pfnNtMapViewOfSection(hSection,
-			GetCurrentProcess(),
-			&viewBase,
-			0,
-			dwImage,
-			&sectionOffset,
-			&viewSize,
-			ViewUnmap,
-			0,
-			PAGE_EXECUTE_READWRITE);
-		SIZE_T numberOfBytesWritten = 0;
-		WriteProcessMemory(GetCurrentProcess(), viewBase, copybuf, viewSize, &numberOfBytesWritten);
-
-		pfnNtUnmapViewOfSection(GetCurrentProcess(), hModule);
 
 		viewBase = hModule;
 
@@ -207,9 +228,9 @@ BOOL ReMapModule(HMODULE hModule)
 		while (pfnNtLockVirtualMemory(GetCurrentProcess(), &viewBase, (ULONG)&LockSize, (PULONG)1) == STATUS_WORKING_SET_QUOTA)
 			ExtendWorkingSet(GetCurrentProcess());
 		bRet = TRUE;
-		VirtualFree(copybuf, 0, MEM_RELEASE);
+		
 
 	}
-	
+	VirtualFree(copybuf, 0, MEM_RELEASE);
 	return bRet;
 }
